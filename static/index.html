@@ -95,6 +95,7 @@ body.has-banner .app{height:calc(100dvh - 32px)}
 .send:disabled{background:var(--line-2)}
 .photo{border:0;background:var(--surface-2);width:40px;height:40px;border-radius:12px;font-size:18px;flex:none;margin-left:-8px}
 .photo:hover{background:var(--accent-soft)}
+.ver{padding:0 0 8px;text-align:center;font-size:11.5px;color:var(--ink-3);font-family:ui-monospace,Menlo,monospace}
 
 /* 설정, 기억 화면 */
 .page{flex:1;overflow-y:auto;padding:28px 24px}
@@ -281,6 +282,7 @@ textarea.input{min-height:80px;resize:vertical}
       <div class="card danger"><h3>내 데이터</h3><p class="lead" style="margin:0 0 12px">캐릭터, 대화, 기억, 약속을 모두 지웁니다. 되돌릴 수 없습니다.</p>
         <div class="actions" style="justify-content:flex-start"><button class="btn" id="deleteAll">내 데이터 모두 삭제</button></div></div>
     </div></section>
+    <div class="ver" id="ver"></div>
   </main>
 
   <aside class="panel" id="panel">
@@ -656,6 +658,13 @@ $("#deleteAll").onclick = async () => {
   if (!confirm("캐릭터, 대화, 기억, 약속을 모두 지웁니다. 되돌릴 수 없습니다. 계속할까요?")) return;
   await api("/api/data", {method: "DELETE"}); location.reload();
 };
+
+// ── 배포 버전 ─────────────────────────────────────────────────
+// /version 의 commit 앞 7자리를 가운데 화면 맨 아래에 보여 준다. 실패해도 화면은 그대로 쓴다.
+fetch("/version").then(r => r.json()).then(v => {
+  $("#ver").textContent = `배포 ${String(v.commit ?? "").slice(0, 7)}`;
+  $("#ver").title = `commit ${v.commit} · revision ${v.revision}`;
+}).catch(() => {});
 
 // ── 시작 ─────────────────────────────────────────────────────
 (async () => {
