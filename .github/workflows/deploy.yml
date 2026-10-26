@@ -40,7 +40,21 @@ jobs:
           env_vars: |
             COMMIT_SHA=${{ github.sha }}
             ENV=${{ vars.ENV }}
-          flags: --service-account=${{ vars.RUNTIME_SA }} --build-service-account=projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.BUILD_SA }}
+          flags: --service-account=${{ vars.RUNTIME_SA }} --build-service-account=projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.BUILD_SA }} --clear-base-image
 
       - name: 배포 주소
         run: echo "배포된 주소 ${{ steps.deploy.outputs.url }}"
+
+      - name: 배포 결과 알림
+        if: always()  # 앞 단계가 실패해도 결과를 알린다
+        env:
+          WEBHOOK_URL: ${{ secrets.DEPLOY_WEBHOOK_URL }}
+          STATUS: ${{ job.status }}
+          ENV_NAME: ${{ vars.ENV }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then echo "DEPLOY_WEBHOOK_URL 시크릿이 없어 알림을 건너뜀"; exit 0; fi
+          if [ "$STATUS" = "success" ]; then ICON=":white_check_mark:"; else ICON=":x:"; fi
+          TEXT="$ICON 배포 $STATUS | 환경 $ENV_NAME | 커밋 ${SHA:0:7} | $RUN_URL"
+          curl -sS -f -X POST -H "Content-Type: application/json" --data "$(jq -n --arg text "$TEXT" '{text: $text}')" "$WEBHOOK_URL"
