@@ -79,10 +79,27 @@ jobs:
           WEBHOOK_URL: ${{ secrets.DEPLOY_WEBHOOK_URL }}
           STATUS: ${{ job.status }}
           ENV_NAME: ${{ vars.ENV }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ env.COMMIT || github.sha }}  # production 승격 때도 /version 과 같은 커밋을 알린다
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ -z "$WEBHOOK_URL" ]; then echo "DEPLOY_WEBHOOK_URL 시크릿이 없어 알림을 건너뜀"; exit 0; fi
           if [ "$STATUS" = "success" ]; then ICON=":white_check_mark:"; else ICON=":x:"; fi
           TEXT="$ICON 배포 $STATUS | 환경 $ENV_NAME | 커밋 ${SHA:0:7} | $RUN_URL"
           curl -sS -f -X POST -H "Content-Type: application/json" --data "$(jq -n --arg text "$TEXT" '{text: $text}')" "$WEBHOOK_URL"
+
+      # 배포가 끝나면 연결표 한 줄(서비스, 커밋, 리비전, 다이제스트)을 실행 요약에 남긴다
+      - name: 배포 기록 남기기
+        env:
+          SERVICE: ${{ vars.SERVICE }}
+          ENV_NAME: ${{ vars.ENV }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          REV=$(gcloud run services describe "$SERVICE" --region us-central1 --format json | jq -r '.status.traffic | max_by(.percent) | .revisionName')
+          DIGEST=$(gcloud run revisions describe "$REV" --region us-central1 --format 'value(status.imageDigest)')
+          {
+            echo "## 배포 기록 ($ENV_NAME)"
+            echo ""
+            echo "| 서비스 | 커밋 (이미지를 만든) | 실행 커밋 | 리비전 | 이미지 다이제스트 |"
+            echo "|---|---|---|---|---|"
+            echo "| $SERVICE | \`${COMMIT:0:12}\` | \`${RUN_SHA:0:12}\` | $REV | \`${DIGEST##*@}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
