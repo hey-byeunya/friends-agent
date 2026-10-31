@@ -71,6 +71,28 @@ jobs:
             ENV=${{ vars.ENV }}
           flags: --service-account=${{ vars.RUNTIME_SA }} --startup-probe=httpGet.path=/health,periodSeconds=5,failureThreshold=12,timeoutSeconds=2
 
+      # 4. 스모크 테스트: 새 리비전에만 닿는 태그 URL로 /health 와 /version 의 커밋을 확인한다
+      #    끝까지 통과하지 못하면 여기서 실패로 끝나고, 사용자는 계속 이전 리비전을 쓴다
+      - name: 스모크 테스트 (태그 URL)
+        env:
+          SERVICE: ${{ vars.SERVICE }}
+        run: |
+          TAG_URL=$(gcloud run services describe "$SERVICE" --region us-central1 --format json | jq -r '.status.traffic[] | select(.tag == "green") | .url')
+          if [ -z "$TAG_URL" ]; then echo "::error::green 태그 URL을 찾지 못했다"; exit 1; fi
+          echo "확인 대상 $TAG_URL, 기대 커밋 ${COMMIT:0:7}"
+          for i in $(seq 1 10); do
+            HEALTH=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$TAG_URL/health" || true)
+            GOT=$(curl -s --max-time 5 "$TAG_URL/version" | jq -r '.commit // empty' 2>/dev/null || true)
+            echo "시도 $i/10: /health $HEALTH, /version 커밋 ${GOT:0:7}"
+            if [ "$HEALTH" = "200" ] && [ "$GOT" = "$COMMIT" ]; then
+              echo "스모크 테스트 통과"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::스모크 테스트 실패: 10번 안에 /health 200 과 커밋 ${COMMIT:0:7} 을 확인하지 못했다"
+          exit 1
+
       - name: 배포 결과
         run: |
           echo "배포된 주소 ${{ steps.deploy.outputs.url }}"
