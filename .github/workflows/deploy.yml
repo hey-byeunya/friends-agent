@@ -56,6 +56,7 @@ jobs:
           echo "COMMIT=$(jq -r '.spec.containers[0].env[] | select(.name=="COMMIT_SHA") | .value' rev.json)" >> "$GITHUB_ENV"
           echo "staging 리비전 $REV 의 이미지를 승격한다"
 
+      # 3. 새 리비전을 트래픽 0%로 올리고 green 태그를 붙인다. 사용자는 아직 이전 리비전을 쓴다
       - id: deploy
         uses: google-github-actions/deploy-cloudrun@v3
         with:
@@ -63,6 +64,8 @@ jobs:
           region: us-central1
           project_id: ${{ vars.GCP_PROJECT_ID }}
           image: ${{ env.IMAGE }}
+          no_traffic: true
+          tag: green
           env_vars: |
             COMMIT_SHA=${{ env.COMMIT }}
             ENV=${{ vars.ENV }}
