@@ -93,6 +93,20 @@ jobs:
           echo "::error::스모크 테스트 실패: 10번 안에 /health 200 과 커밋 ${COMMIT:0:7} 을 확인하지 못했다"
           exit 1
 
+      # 5. 전환: 스모크 테스트를 통과한 green 리비전으로 트래픽 100%를 리비전 이름으로 옮긴다
+      #    이름으로 고정해 두므로, 다음 배포에서 green 태그가 새 리비전으로 옮겨 가도 트래픽은 따라가지 않는다
+      - name: 전환 (블루그린)
+        env:
+          SERVICE: ${{ vars.SERVICE }}
+        run: |
+          gcloud run services describe "$SERVICE" --region us-central1 --format json > svc.json
+          PREV=$(jq -r '.status.traffic | max_by(.percent) | .revisionName' svc.json)
+          NEW=$(jq -r '.status.traffic[] | select(.tag == "green") | .revisionName' svc.json)
+          if [ -z "$NEW" ]; then echo "::error::green 태그 리비전을 찾지 못했다"; exit 1; fi
+          echo "전환 전 리비전 $PREV (롤백할 곳)"
+          echo "전환할 리비전 $NEW"
+          gcloud run services update-traffic "$SERVICE" --region us-central1 --to-revisions "$NEW=100"
+
       - name: 배포 결과
         run: |
           echo "배포된 주소 ${{ steps.deploy.outputs.url }}"
