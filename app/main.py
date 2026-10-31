@@ -80,6 +80,9 @@ def home():
 
 @app.get("/health")
 def health():
+    # 스테이지 6 시험용 망가진 버전: 배포된 환경에서만 항상 실패한다. 테스트(ENV=test)는 통과해 배포 단계까지 간다
+    if settings.env in ("staging", "production"):
+        return JSONResponse({"status": "broken"}, status_code=503)
     return {"status": "ok"}
 
 
