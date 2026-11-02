@@ -16,6 +16,8 @@ LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY 가 둘 다 있을 때만 켜진다. �
 - https://langfuse.com/docs/observability/features/environments
 - https://langfuse.com/docs/observability/features/releases-and-versioning
 - https://langfuse.com/docs/observability/features/tags
+- https://langfuse.com/docs/evaluation/evaluation-methods/scores-via-sdk
+- https://langfuse.com/docs/observability/features/user-feedback
 """
 import os
 import re
@@ -150,3 +152,26 @@ def flush():
             c.flush()
         except Exception as error:
             log("WARNING", "Langfuse 기록 보내기 실패", error=type(error).__name__)
+
+
+def trace_id(observation):
+    """메시지 meta 에 저장해 둘 트레이스 ID. 계측이 꺼져 있으면 None."""
+    return getattr(observation, "trace_id", None)
+
+
+def score(trace, name, value, comment=None):
+    """사용자 반응을 트레이스 점수(BOOLEAN)로 보낸다. 키나 트레이스 ID 가 없으면 건너뛴다.
+
+    점수는 OTel 내보내기를 거치지 않으므로 마스킹 훅이 적용되지 않는다. comment 는 여기서 직접 가린다.
+    """
+    c = client()
+    if not (c and trace):
+        return False
+    try:
+        c.create_score(name=name, value=1 if value else 0, trace_id=trace, data_type="BOOLEAN",
+                       comment=mask_text(comment) if comment else None)
+        c.flush()
+        return True
+    except Exception as error:
+        log("WARNING", "Langfuse 점수 보내기 실패", score=name, error=type(error).__name__)
+        return False
