@@ -6,7 +6,7 @@
 """
 import re
 
-from app import when
+from app import tracing, when
 from app.logs import log
 from app.safety import is_sensitive
 
@@ -112,8 +112,11 @@ def update_memories(store, uid, user_message, reply, now, llm):
     return changes
 
 
-def maybe_summarize(store, uid, llm):
-    """요약되지 않은 메시지가 많으면 앞쪽을 요약에 합친다. 요약했으면 True."""
+def maybe_summarize(store, uid, llm, turn=tracing.OFF):
+    """요약되지 않은 메시지가 많으면 앞쪽을 요약에 합친다. 요약했으면 True.
+
+    turn 은 이 턴의 Langfuse 트레이스다. 실제로 요약할 때만 그 아래에 memory-summary 를 남긴다.
+    """
     summary = store.get_summary(uid)
     pending = store.messages_after(uid, summary["covers_until"] if summary else 0)
     if len(pending) <= SUMMARIZE_AFTER:
@@ -121,11 +124,13 @@ def maybe_summarize(store, uid, llm):
     batch = pending[:SUMMARIZE_BATCH]
     talk = "\n".join(f"{m['role']}: {m['content']}" for m in batch)
     previous = f"[기존 요약]\n{summary['text']}\n\n" if summary else ""
-    if getattr(llm, "can_reason", False):
-        text = llm.complete_text([{"role": "system", "content": SUMMARY_PROMPT},
-                                  {"role": "user", "content": f"{previous}[대화]\n{talk}"}])
-    else:
-        text = ((summary["text"] + " ") if summary else "") + f"메시지 {len(batch)}개를 주고받았다."
+    with turn.start_as_current_observation(name="memory-summary", as_type="generation", model=getattr(llm, "model", None)) as step:
+        if getattr(llm, "can_reason", False):
+            text = llm.complete_text([{"role": "system", "content": SUMMARY_PROMPT},
+                                      {"role": "user", "content": f"{previous}[대화]\n{talk}"}])
+        else:
+            text = ((summary["text"] + " ") if summary else "") + f"메시지 {len(batch)}개를 주고받았다."
+        step.update(metadata={"merged_messages": len(batch)})
     store.save_summary(uid, text[:2000], batch[-1]["id"])
     log("INFO", "대화 요약 갱신", covered=len(batch))
     return True

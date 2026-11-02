@@ -3,10 +3,21 @@
 OpenAI와 Gemini는 같은 OpenAI SDK로 부르고, 주소(base_url)와 모델 이름만 다르다.
 Claude는 Anthropic SDK로 따로 부른다. 앱 안에서 쓰는 메시지 형식은 OpenAI 형식이라서, ClaudeLLM이 Claude 형식으로 바꿔 보낸다.
 fake 는 키 없이 화면과 흐름을 확인하거나 테스트할 때 쓰는 가짜 응답이다.
+
+세 클래스 모두 모델을 부른 뒤 모델 이름과 입력, 출력 토큰 수를 같은 방식으로 Langfuse에 남긴다(app/tracing.py).
+제공사별 자동 계측을 쓰지 않는 것은, 제공사를 바꿔도 기록이 빠지지 않게 하려는 것이다.
+chat_stream 은 여러 번에 나눠 이어지므로, 토큰 수를 usage 딕셔너리에 채워 부른 쪽이 직접 적게 한다.
 """
 import json
 import re
 import time
+
+from app import tracing
+
+
+def _tokens(usage, input_name, output_name):
+    """응답의 usage 객체에서 입력, 출력 토큰 수를 꺼낸다. 없으면 0."""
+    return getattr(usage, input_name, 0) or 0, getattr(usage, output_name, 0) or 0
 
 
 class OpenAICompatibleLLM:
@@ -25,18 +36,29 @@ class OpenAICompatibleLLM:
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             response_format={"type": "json_object"},
         )
-        return json.loads(response.choices[0].message.content)
+        content = response.choices[0].message.content
+        self._record(system_user(system, user), content, response)
+        return json.loads(content)
 
     def complete_text(self, messages):
         response = self.client.chat.completions.create(model=self.model, messages=messages)
-        return response.choices[0].message.content.strip()
+        text = response.choices[0].message.content.strip()
+        self._record(messages, text, response)
+        return text
 
-    def chat_stream(self, messages):
-        """답을 만들어지는 대로 조금씩 돌려준다(스트리밍)."""
-        response = self.client.chat.completions.create(model=self.model, messages=messages, stream=True)
+    def chat_stream(self, messages, usage=None):
+        """답을 만들어지는 대로 조금씩 돌려준다(스트리밍). 마지막 조각에 토큰 수가 온다."""
+        response = self.client.chat.completions.create(model=self.model, messages=messages, stream=True,
+                                                       stream_options={"include_usage": True})
         for event in response:
             if event.choices and event.choices[0].delta.content:
                 yield event.choices[0].delta.content
+            if getattr(event, "usage", None) and usage is not None:
+                usage.update(tracing.usage(*_tokens(event.usage, "prompt_tokens", "completion_tokens")))
+
+    def _record(self, messages, output, response):
+        tracing.record_call(self.model, messages, output,
+                            *_tokens(getattr(response, "usage", None), "prompt_tokens", "completion_tokens"))
 
 
 class ClaudeLLM:
@@ -90,22 +112,38 @@ class ClaudeLLM:
         response = self.client.beta.messages.create(**self._request(system, [{"role": "user", "content": user}]))
         if response.stop_reason == "refusal":
             raise ValueError("Claude가 요청을 거절했습니다.")
-        return parse_json_object(self._text(response))
+        text = self._text(response)
+        self._record(system_user(system, user), text, response)
+        return parse_json_object(text)
 
     def complete_text(self, messages):
         system, turns = self.to_claude(messages)
-        return self._text(self.client.beta.messages.create(**self._request(system, turns)))
+        response = self.client.beta.messages.create(**self._request(system, turns))
+        text = self._text(response)
+        self._record(messages, text, response)
+        return text
 
-    def chat_stream(self, messages):
-        """답을 만들어지는 대로 조금씩 돌려준다(스트리밍)."""
+    def chat_stream(self, messages, usage=None):
+        """답을 만들어지는 대로 조금씩 돌려준다(스트리밍). 끝난 뒤 최종 메시지에서 토큰 수를 읽는다."""
         system, turns = self.to_claude(messages)
         with self.client.beta.messages.stream(**self._request(system, turns)) as stream:
             sent = False
             for text in stream.text_stream:
                 sent = True
                 yield text
-            if stream.get_final_message().stop_reason == "refusal" and not sent:
+            final = stream.get_final_message()
+            if usage is not None:
+                usage.update(tracing.usage(*_tokens(getattr(final, "usage", None), "input_tokens", "output_tokens")))
+            if final.stop_reason == "refusal" and not sent:
                 yield self.REFUSAL_NOTICE
+
+    def _record(self, messages, output, response):
+        tracing.record_call(self.model, messages, output,
+                            *_tokens(getattr(response, "usage", None), "input_tokens", "output_tokens"))
+
+
+def system_user(system, user):
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
 def parse_json_object(text):
@@ -151,10 +189,14 @@ class FakeLLM:
         return f"(가짜 응답) {body}"
 
     def complete_text(self, messages):
-        return self._reply(messages)
-
-    def chat_stream(self, messages):
         text = self._reply(messages)
+        tracing.record_call(self.model, messages, text, 0, 0)
+        return text
+
+    def chat_stream(self, messages, usage=None):
+        text = self._reply(messages)
+        if usage is not None:
+            usage.update(tracing.usage(0, 0))
         for i in range(0, len(text), 4):
             time.sleep(self.delay)
             yield text[i:i + 4]
