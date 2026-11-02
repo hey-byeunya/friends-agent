@@ -19,7 +19,7 @@ from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from app import agent, ocr, qr, when
+from app import agent, ocr, qr, tracing, when
 from app.auth import Auth, User
 from app.config import ROOT, load_settings
 from app.llm import make_llm
@@ -70,6 +70,11 @@ class SettingsRequest(BaseModel):
 class ReportRequest(BaseModel):
     message_id: int
     reason: str = ""
+
+
+class FeedbackRequest(BaseModel):
+    message_id: int
+    liked: bool
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -199,10 +204,29 @@ async def read_qr(photo: UploadFile, user: User = Depends(current_user)):
         raise HTTPException(500, str(error)) from error
 
 
+def my_reply(user, message_id):
+    """로그인한 사용자의 친구 답 하나. 남의 메시지나 내 메시지(user)에는 반응을 남길 수 없다."""
+    message = store.get_message(user.id, message_id)
+    if not message or message["role"] != "assistant":
+        raise HTTPException(404, "반응을 남길 수 있는 답이 아닙니다")
+    return message
+
+
+@app.post("/api/feedback")
+def feedback(req: FeedbackRequest, user: User = Depends(current_user)):
+    """좋아요(1), 별로예요(0)를 트레이스 점수 user-feedback 으로 보낸다. Langfuse 키가 없으면 건너뛴다."""
+    message = my_reply(user, req.message_id)
+    sent = tracing.score(message["meta"].get("trace_id"), "user-feedback", req.liked)
+    log("INFO", "답 반응", message_id=req.message_id, liked=req.liked, scored=sent)
+    return {"ok": True}
+
+
 @app.post("/api/report")
 def report(req: ReportRequest, user: User = Depends(current_user)):
-    # 지금은 로그로만 남긴다. 관측 도구를 붙이면 그 도구의 점수로 보낸다.
-    log("WARNING", "부적절한 답변 신고", message_id=req.message_id, reason_length=len(req.reason))
+    """신고를 트레이스 점수 report(1)로 보낸다. 사유는 comment 로 보내되 개인정보 패턴은 가린다."""
+    message = my_reply(user, req.message_id)
+    sent = tracing.score(message["meta"].get("trace_id"), "report", True, comment=req.reason[:500] or None)
+    log("WARNING", "부적절한 답변 신고", message_id=req.message_id, reason_length=len(req.reason), scored=sent)
     return {"ok": True}
 
 
