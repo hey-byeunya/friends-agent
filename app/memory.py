@@ -20,6 +20,9 @@ EXTRACT_PROMPT = """너는 AI 친구 서비스의 기억 정리 담당이다. �
 - kind 는 fact(사실: 이름, 직업, 가족, 반려동물), preference(취향), event(날짜가 있는 일정이나 사건) 중 하나다.
 - event 에는 대화에 나온 날짜를 [지금] 기준의 실제 날짜로 바꿔 함께 적는다. [달력]을 보고 요일을 맞춘다. 예: "10월 16일(금) 자격증 시험".
 - 이미 있는 기억과 같은 내용이면 추가하지 않는다. 내용이 바뀌었으면 update 로 고친다. 사용자가 틀렸다거나 잊으라고 하면 remove 한다.
+- 이름, 거주지, 직업처럼 사람마다 값이 하나인 사실은 "항목: 값" 꼴로 적는다. 같은 항목이 이미 있으면 add 하지 말고 그 기억의 id 로 update 한다.
+  예: 이미 "id=8 (fact) 이름: 한수" 가 있는데 "내 이름은 지수야" → {"update": [{"id": 8, "text": "이름: 지수"}]}
+- 내용이 그대로인 기억은 update 에 넣지 않는다.
 - 인사, 감탄, 그날의 기분처럼 다음 대화에 쓸모없는 것은 저장하지 않는다.
 - 사용자가 나중에 알려 달라고 한 일은 약속 기능이 따로 저장하므로 기억에 넣지 않는다.
 - 주민등록번호, 카드 번호, 계좌 번호, 비밀번호, 정확한 집 주소는 절대 저장하지 않는다.
@@ -44,6 +47,13 @@ def object_particle(word):
     if "가" <= last <= "힣":
         return "을" if (ord(last) - 0xAC00) % 28 else "를"
     return "을(를)"
+
+
+def fact_key(text):
+    """짧은 "항목: 값" 꼴이면 항목을 돌려준다(이름: 한수 → 이름). 아니면 None."""
+    key, sep, value = text.partition(":")
+    key = key.strip()
+    return key if sep and value.strip() and 0 < len(key) <= 10 else None
 
 
 def build_context(store, uid):
@@ -91,16 +101,23 @@ def update_memories(store, uid, user_message, reply, now, llm):
 
     known_ids = {m["id"]: m for m in existing}
     known_texts = {m["text"] for m in existing}
+    # "이름: 한수" 처럼 항목이 있는 사실은 항목마다 하나만 둔다. 모델이 고치지 않고 새로 추가해도 여기서 고친다.
+    known_keys = {fact_key(m["text"]): m for m in existing if m["kind"] == "fact" and fact_key(m["text"])}
     changes = {"added": [], "updated": [], "removed": []}
+    updates = list(plan.get("update") or [])
     for item in plan.get("add") or []:
         text = str(item.get("text") or "").strip()[:200]
         kind = item.get("kind") if item.get("kind") in KINDS else "fact"
         if not text or text in known_texts or is_sensitive(text):
             continue
+        same = known_keys.get(fact_key(text)) if kind == "fact" else None
+        if same:
+            updates.append({"id": same["id"], "text": text})
+            continue
         changes["added"].append(store.add_memory(uid, kind, text))
-    for item in plan.get("update") or []:
+    for item in updates:
         text = str(item.get("text") or "").strip()[:200]
-        if item.get("id") in known_ids and text and not is_sensitive(text):
+        if item.get("id") in known_ids and text and text != known_ids[item["id"]]["text"] and not is_sensitive(text):
             store.update_memory(uid, item["id"], text)
             changes["updated"].append({"id": item["id"], "text": text})
     for memory_id in plan.get("remove") or []:
