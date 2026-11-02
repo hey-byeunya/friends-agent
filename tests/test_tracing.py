@@ -82,3 +82,14 @@ def test_turn_fills_tags_and_metadata_after_choosing(monkeypatch):
     assert seen["tags"] == ["clarify"]
     assert seen["metadata"]["safety"] is False
     assert seen["metadata"]["tools"] == "" and seen["metadata"]["confidence"] == 0.3
+
+
+def test_turn_flushes_before_closing_response(monkeypatch):
+    from app import agent
+    from app.store.memory_store import MemoryStore
+
+    calls = []
+    monkeypatch.setattr(tracing, "flush", lambda: calls.append("flush"))
+    events = list(agent.run_turn("안녕", "user-1", FakeLLM(delay=0), MemoryStore(), False))
+    assert events[-1]["type"] == "done"
+    assert calls == ["flush"]

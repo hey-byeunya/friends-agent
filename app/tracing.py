@@ -143,6 +143,10 @@ def usage(input_tokens, output_tokens):
 
 
 def flush():
+    """모아 둔 기록을 지금 보낸다. 보내기가 실패해도 응답은 그대로 끝낸다."""
     c = client()
     if c:
-        c.flush()
+        try:
+            c.flush()
+        except Exception as error:
+            log("WARNING", "Langfuse 기록 보내기 실패", error=type(error).__name__)

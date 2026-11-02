@@ -66,6 +66,8 @@ def run_turn(message, uid, llm, store, show_panel):
         steps.close()
         turn.update(output="".join(reply))
         turn.end()
+        # Cloud Run 은 응답이 끝나면 CPU 를 거의 주지 않아 SDK 가 모아 둔 기록을 못 보낸다. 응답을 닫기 전에 보낸다
+        tracing.flush()
 
 
 def _turn(message, uid, llm, store, show_panel, turn, attrs):
@@ -184,6 +186,7 @@ def greet(uid, llm, store):
         text = llm.complete_text([{"role": "system", "content": system},
                                   {"role": "user", "content": "(앱을 열었다. 먼저 말을 걸어 줘)"}])
         step.update(metadata={"reminders": len(due)})
-    saved = store.add_message(uid, "assistant", text, {"action": "greeting", "reminders": [r["id"] for r in due]})
+    tracing.flush()
+    saved =store.add_message(uid, "assistant", text, {"action": "greeting", "reminders": [r["id"] for r in due]})
     log("INFO", "먼저 말 걸기", reminders=len(due))
     return {"id": saved["id"], "text": text, "reminders": [r["text"] for r in due]}
