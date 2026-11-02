@@ -93,3 +93,19 @@ def test_turn_flushes_before_closing_response(monkeypatch):
     events = list(agent.run_turn("안녕", "user-1", FakeLLM(delay=0), MemoryStore(), False))
     assert events[-1]["type"] == "done"
     assert calls == ["flush"]
+
+
+def test_incoming_traceparent_does_not_drop_our_traces():
+    """Cloud Run 은 요청에 traceparent 를 붙이고 일부에만 '기록함'(-01) 표시를 한다.
+    FastAPI 가 그 헤더를 부모로 이으면 '기록 안 함'(-00) 요청의 트레이스가 통째로 사라진다."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+
+    trace.set_tracer_provider(TracerProvider())  # Langfuse 클라이언트가 만들어질 때 하는 일
+
+    @app.get("/test/recording")
+    def recording():
+        return {"recording": trace.get_tracer("test").start_span("probe").is_recording()}
+
+    unsampled = {"traceparent": "00-" + "1" * 32 + "-" + "2" * 16 + "-00"}
+    assert TestClient(app).get("/test/recording", headers=unsampled).json() == {"recording": True}

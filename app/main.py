@@ -33,7 +33,10 @@ llm = make_llm(settings)
 store = make_store(settings)
 current_user = Auth(settings)
 
-app = FastAPI(title="AI 친구 에이전트")
+# FastAPI 0.162 부터 OTel 트레이서가 있으면 요청마다 HTTP span 을 만들고 들어온 traceparent 를 부모로 잇는다.
+# Cloud Run 이 '기록 안 함'(-00)으로 표시한 요청에서는 그 아래 Langfuse 트레이스가 통째로 버려지므로 끈다.
+# 계측은 app/tracing.py 의 Langfuse 트레이스로만 한다.
+app = FastAPI(title="AI 친구 에이전트", telemetry={"tracing": False})
 
 # 시작 지연 스위치(배포 실습용). 포트는 바로 열지만 정한 시간 동안은 준비 중이라 모든 요청에 503을 돌려준다.
 # AI 서비스가 시작할 때 모델 설정이나 색인을 불러오느라 늦게 준비되는 상황을 흉내 낸다. 기본값 0(끔).
