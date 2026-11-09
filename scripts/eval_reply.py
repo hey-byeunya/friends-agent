@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app import tracing  # noqa: E402
-from app.agent import system_prompt  # noqa: E402
+from app.agent import reply_messages  # noqa: E402
 from app.config import load_settings  # noqa: E402
 from app.llm import make_llm  # noqa: E402
 from app.persona import DEFAULT_CHARACTER  # noqa: E402
@@ -90,8 +90,9 @@ def main():
     results = []
     for row in rows:
         now = datetime.fromisoformat(row["now"])
-        system = system_prompt(DEFAULT_CHARACTER, now, "서울", [], None, row["tool_lines"])
-        messages = [{"role": "system", "content": system}, *row["history"], {"role": "user", "content": row["message"]}]
+        memories = [{"text": t} for t in row.get("memories", [])]
+        messages = reply_messages(DEFAULT_CHARACTER, now, "서울", memories, None, row["history"], row["message"],
+                                  row["tool_lines"])
         for i in range(args.repeat):
             start = time.time()
             with tracing.current_trace("reply-eval", as_type="generation", model=getattr(llm, "model", None)) as step:

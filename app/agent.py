@@ -30,9 +30,9 @@ GREETING_GAP = timedelta(hours=6)  # 마지막 대화 뒤 이만큼 지나면 �
 # 대화 턴의 도구 결과는 사용자의 이번 말을 듣고 방금 실행한 것이다. 칸 이름이 그냥 [도구 결과]이면 모델이
 # 원래 있던 상태로 읽어 방금 저장한 약속을 "이미 저장돼 있다"고 답했다(트레이스에서 약속 저장 11턴 중 5턴).
 JUST_RAN = ("[방금 한 일: 사용자의 이번 말을 듣고 지금 실행한 도구 결과]",
-            "위 결과는 이번 말에 대해 방금 한 일이다. 약속을 저장했다면 답에 '저장했어'를, 취소했다면 '취소했어'를 "
-            "꼭 넣어 방금 한 일로 알린다. '이미'라는 말을 쓰지 않고, 원래 있던 것처럼 말하거나 저장할 수 없다고 "
-            "말하지 않는다.")
+            "위 결과를 근거로 답한다. 날씨·미세먼지·공휴일·약속 목록 같은 정보는 결과에 있는 그대로 알려 준다. "
+            "약속을 저장했다면 '저장했어'와 약속 시각을, 취소했다면 '취소했어'를 꼭 넣어 방금 한 일로 알린다. "
+            "'이미'라는 말을 쓰지 않고, 원래 있던 것처럼 말하거나 저장할 수 없다고 말하지 않는다.")
 
 
 def system_prompt(character, now, location, memories, summary, tool_lines=(), clarify=False, tool_block=JUST_RAN):
@@ -48,6 +48,22 @@ def system_prompt(character, now, location, memories, summary, tool_lines=(), cl
     if clarify:
         parts.append("[되묻기]\n사용자가 무엇을 원하는지 확실하지 않다. 짧게 되물어서 확인한다.")
     return "\n\n".join(parts)
+
+
+def reply_messages(character, now, location, memories, summary, history, message, tool_lines=(), clarify=False):
+    """답 생성에 넣을 메시지 목록. 평가 스크립트(scripts/eval_reply.py)도 이 함수를 그대로 쓴다.
+
+    이번 턴의 도구 결과는 사용자의 이번 말 바로 뒤에 둔다. 시스템 메시지 끝에 두면 앞 대화 수십 개보다 앞에 놓여
+    모델이 예전부터 있던 정보로 읽고 방금 저장한 약속을 "기억하고 있어", "이미 저장했어"라고 답했다
+    (staging 00059-lux 약속 저장 8턴 중 5턴, 같은 입력을 다시 보내면 24번 중 11번).
+    """
+    messages = [{"role": "system", "content": system_prompt(character, now, location, memories, summary, clarify=clarify)},
+                *history, {"role": "user", "content": message}]
+    if tool_lines:
+        title, guide = JUST_RAN
+        messages.append({"role": "system", "content": title + "\n" + "\n".join(f"- {line}" for line in tool_lines)
+                         + f"\n{guide}"})
+    return messages
 
 
 def run_turn(message, uid, llm, store, show_panel):
@@ -136,13 +152,12 @@ def _turn(message, uid, llm, store, show_panel, turn, attrs):
             yield {"type": "reminder", "action": r.name, "summary": r.summary}
 
     # ④ 답 생성
-    system = system_prompt(character, now, settings["location"], memories, summary,
-                           [r.summary for r in results], clarify=choice.action == "clarify")
     if show_panel:
         yield {"type": "context", "memories": [m["text"] for m in memories],
                "summary": summary["text"] if summary else None, "recent_messages": len(history)}
     reply = ""
-    messages = [{"role": "system", "content": system}, *history, {"role": "user", "content": message}]
+    messages = reply_messages(character, now, settings["location"], memories, summary, history, message,
+                              [r.summary for r in results], clarify=choice.action == "clarify")
     step = turn.start_observation(name="reply", as_type="generation", model=getattr(llm, "model", None), input=messages)
     usage = {}
     try:
