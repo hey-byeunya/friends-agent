@@ -53,3 +53,10 @@ def test_ocr_is_off_by_default():
 def test_qr_is_off_by_default():
     r = client.post("/api/qr", files={"photo": ("a.png", b"x", "image/png")})
     assert r.status_code == 404
+
+
+def test_fake_reply_tells_tool_result_of_this_turn():
+    # 이번 턴의 도구 결과는 사용자 메시지 뒤 [방금 한 일] 칸에 들어간다(reply_messages). 가짜 응답도 그 칸을 읽어야 한다.
+    events = chat("내일 저녁 7시에 우산 챙기라고 알려 줘")
+    text = "".join(e["text"] for e in events if e["type"] == "delta")
+    assert "약속을 저장했습니다" in text

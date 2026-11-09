@@ -4,5 +4,7 @@
 """
 import os
 
-os.environ.update({"LLM_PROVIDER": "fake", "LLM_API_KEY": "", "STORAGE": "memory", "AUTH": "none"})
+os.environ.update({"LLM_PROVIDER": "fake", "LLM_API_KEY": "", "STORAGE": "memory", "AUTH": "none",
+                   # .env 에 Langfuse 키가 있어도 테스트는 트레이스를 보내지 않는다
+                   "LANGFUSE_PUBLIC_KEY": "", "LANGFUSE_SECRET_KEY": ""})
 os.environ.setdefault("ENV", "test")
