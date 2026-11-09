@@ -51,9 +51,19 @@ def system_prompt(character, now, location, memories, summary, tool_lines=(), cl
 
 
 def reply_messages(character, now, location, memories, summary, history, message, tool_lines=(), clarify=False):
-    """답 생성에 넣을 메시지 목록. 평가 스크립트(scripts/eval_reply.py)도 이 함수를 그대로 쓴다."""
-    system = system_prompt(character, now, location, memories, summary, tool_lines, clarify=clarify)
-    return [{"role": "system", "content": system}, *history, {"role": "user", "content": message}]
+    """답 생성에 넣을 메시지 목록. 평가 스크립트(scripts/eval_reply.py)도 이 함수를 그대로 쓴다.
+
+    이번 턴의 도구 결과는 사용자의 이번 말 바로 뒤에 둔다. 시스템 메시지 끝에 두면 앞 대화 수십 개보다 앞에 놓여
+    모델이 예전부터 있던 정보로 읽고 방금 저장한 약속을 "기억하고 있어", "이미 저장했어"라고 답했다
+    (staging 00059-lux 약속 저장 8턴 중 5턴, 같은 입력을 다시 보내면 24번 중 11번).
+    """
+    messages = [{"role": "system", "content": system_prompt(character, now, location, memories, summary, clarify=clarify)},
+                *history, {"role": "user", "content": message}]
+    if tool_lines:
+        title, guide = JUST_RAN
+        messages.append({"role": "system", "content": title + "\n" + "\n".join(f"- {line}" for line in tool_lines)
+                         + f"\n{guide}"})
+    return messages
 
 
 def run_turn(message, uid, llm, store, show_panel):
