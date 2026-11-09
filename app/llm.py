@@ -156,7 +156,7 @@ def parse_json_object(text):
 
 class FakeLLM:
     """AI를 부르지 않는다. 도구 선택과 기억 정리는 키워드 규칙이 맡고(can_reason=False),
-    답은 지시문에 들어 있는 도구 결과와 캐릭터 이름으로 짧게 만든다.
+    답은 도구 결과와 캐릭터 이름으로 짧게 만든다.
 
     비용이 들지 않고 같은 입력에는 늘 같은 답을 돌려주므로, 키 없이 화면을 확인하거나 테스트할 때 쓴다.
     """
@@ -172,11 +172,16 @@ class FakeLLM:
         polite = "존댓말" in system
         name = re.search(r"이름: (.+)", system)
         name = name.group(1).strip() if name else "친구"
+        # 도구 결과는 첫 시스템 메시지 안 [도구 결과] 칸(앱을 열 때 인사)이나, 사용자 메시지 뒤의
+        # [방금 한 일 …] 시스템 메시지(대화 턴, agent.reply_messages)에 있다.
         tool_lines = []
         if "[도구 결과]" in system:
             block = system.split("[도구 결과]", 1)[1].split("\n\n", 1)[0]
             tool_lines = [line[2:] for line in block.splitlines() if line.startswith("- ")]
-        user = messages[-1]["content"] if messages[-1]["role"] == "user" else ""
+        for m in messages[1:]:
+            if m["role"] == "system" and m["content"].startswith("[방금 한 일"):
+                tool_lines += [line[2:] for line in m["content"].splitlines() if line.startswith("- ")]
+        user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
 
         if "[되묻기]" in system:
             body = "무슨 말인지 조금 더 알려 줄래요?" if polite else "무슨 말인지 조금만 더 알려 줄래?"
