@@ -50,6 +50,12 @@ def system_prompt(character, now, location, memories, summary, tool_lines=(), cl
     return "\n\n".join(parts)
 
 
+def reply_messages(character, now, location, memories, summary, history, message, tool_lines=(), clarify=False):
+    """답 생성에 넣을 메시지 목록. 평가 스크립트(scripts/eval_reply.py)도 이 함수를 그대로 쓴다."""
+    system = system_prompt(character, now, location, memories, summary, tool_lines, clarify=clarify)
+    return [{"role": "system", "content": system}, *history, {"role": "user", "content": message}]
+
+
 def run_turn(message, uid, llm, store, show_panel):
     """한 턴을 chat-turn 트레이스로 감싼다. 끝나거나 중간에 끊겨도 트레이스를 닫는다.
 
@@ -136,13 +142,12 @@ def _turn(message, uid, llm, store, show_panel, turn, attrs):
             yield {"type": "reminder", "action": r.name, "summary": r.summary}
 
     # ④ 답 생성
-    system = system_prompt(character, now, settings["location"], memories, summary,
-                           [r.summary for r in results], clarify=choice.action == "clarify")
     if show_panel:
         yield {"type": "context", "memories": [m["text"] for m in memories],
                "summary": summary["text"] if summary else None, "recent_messages": len(history)}
     reply = ""
-    messages = [{"role": "system", "content": system}, *history, {"role": "user", "content": message}]
+    messages = reply_messages(character, now, settings["location"], memories, summary, history, message,
+                              [r.summary for r in results], clarify=choice.action == "clarify")
     step = turn.start_observation(name="reply", as_type="generation", model=getattr(llm, "model", None), input=messages)
     usage = {}
     try:
