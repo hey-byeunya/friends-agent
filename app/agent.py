@@ -27,14 +27,24 @@ from app.tools import TOOLS, Context, run_tool
 GREETING_GAP = timedelta(hours=6)  # 마지막 대화 뒤 이만큼 지나면 앱을 열 때 먼저 말을 건다
 
 
-def system_prompt(character, now, location, memories, summary, tool_lines=(), clarify=False):
+# 대화 턴의 도구 결과는 사용자의 이번 말을 듣고 방금 실행한 것이다. 칸 이름이 그냥 [도구 결과]이면 모델이
+# 원래 있던 상태로 읽어 방금 저장한 약속을 "이미 저장돼 있다"고 답했다(트레이스에서 약속 저장 11턴 중 5턴).
+JUST_RAN = ("[방금 한 일: 사용자의 이번 말을 듣고 지금 실행한 도구 결과]",
+            "위 결과는 이번 말에 대해 방금 한 일이다. 약속을 저장했다면 답에 '저장했어'를, 취소했다면 '취소했어'를 "
+            "꼭 넣어 방금 한 일로 알린다. '이미'라는 말을 쓰지 않고, 원래 있던 것처럼 말하거나 저장할 수 없다고 "
+            "말하지 않는다.")
+
+
+def system_prompt(character, now, location, memories, summary, tool_lines=(), clarify=False, tool_block=JUST_RAN):
+    """tool_block 은 (칸 이름, 칸 뒤 안내) 이다. 앱을 열 때 인사(greet)는 원래 있던 약속 알림이라 따로 넘긴다."""
     parts = [build_persona(character),
              f"[지금] {when.label(now)} ({now.tzinfo}), 사용자 지역: {location}\n[달력]\n{when.calendar_hint(now)}"]
     block = memory.memory_block(memories, summary)
     if block:
         parts.append(block)
     if tool_lines:
-        parts.append("[도구 결과]\n" + "\n".join(f"- {line}" for line in tool_lines))
+        title, guide = tool_block
+        parts.append(title + "\n" + "\n".join(f"- {line}" for line in tool_lines) + (f"\n{guide}" if guide else ""))
     if clarify:
         parts.append("[되묻기]\n사용자가 무엇을 원하는지 확실하지 않다. 짧게 되물어서 확인한다.")
     return "\n\n".join(parts)
@@ -175,7 +185,8 @@ def greet(uid, llm, store):
 
     memories, summary, _ = memory.build_context(store, uid)
     lines = [f"약속 알림: '{r['text']}' ({when.label(r['due_at'].astimezone(now.tzinfo))} 예정이었음)" for r in due]
-    system = system_prompt(character, now, settings["location"], memories, summary, lines)
+    system = system_prompt(character, now, settings["location"], memories, summary, lines,
+                           tool_block=("[도구 결과]", ""))
     guide = ["사용자가 방금 앱을 열었다. 네가 먼저 1~2문장으로 말을 건다."]
     guide.append("[도구 결과]의 약속 알림을 꼭 전한다." if due else "전할 약속은 없다. 약속이나 알림 이야기를 꺼내지 않는다.")
     guide.append("기억 메모에 오늘이거나 이미 지난 일정이 있으면 어땠는지 물어본다.")
